@@ -1,5 +1,6 @@
 #! /usr/bin/env python3
 import re
+import pprint
 
 def procedural_eval(exp, env):
     """
@@ -168,6 +169,7 @@ def eval_definition(exp, env):
         definition_variable(exp),
         eval(definition_value(exp), env),
         env)
+    return "\n%s" % pprint.pformat(env)
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # syntax
@@ -622,7 +624,7 @@ def make_procedure(parameters, body, env):
     (define (make-procedure parameters body env)
       (list 'procedure parameters body env))
     """
-    return list_("procedure", parameters, body, env)
+    return list_("procedure", parameters, body, Env(env))
 
 
 def is_compound_procedure(proc):
@@ -651,7 +653,20 @@ def procedure_environment(proc):
     """
     (define (procedure-environment p) (cadddr p))
     """
-    return head(tail(tail(tail(proc))))
+    return head(tail(tail(tail(proc)))).env
+
+
+class Env(object):
+
+    def __init__(self, env):
+        self.env = env
+
+    def __repr__(self):
+        rep = repr(self.env)
+        if len(rep) > 50:
+            rep = rep[:50] + "... "
+        return rep
+
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # operations on environments
@@ -979,16 +994,32 @@ def primitive_implementation(proc):
     return head(tail(proc))
 
 
+def make_primitive(obj):
+    return list_("primitive", head(tail(obj)))
+
+
+def add(*a):
+    return sum(a)
+
+def sub(a, b):
+    return a - b
+
+def mul(a, b):
+    return a * b
+
+def div(a, b):
+    return a / b
+
 primitive_procedures = [
     list_("car", head),
     list_("cdr", tail),
     list_("cons", pair),
     list_("null?", is_null),
     list_("=", is_equal),
-    list_("+", lambda *a: sum(a)),
-    list_("-", lambda a, b: a - b),
-    list_("*", lambda a, b: a * b),
-    list_("/", lambda a, b: a / b),
+    list_("+", add),
+    list_("-", sub),
+    list_("*", mul),
+    list_("/", div),
 ]
 """
 (define primitive-procedures
@@ -1007,10 +1038,7 @@ primitive_procedure_names = list_(*map(head, primitive_procedures))
 """
 
 
-primitive_procedure_objects = list_(*map(
-    lambda obj: list_("primitive", head(tail(obj))),
-    primitive_procedures
-))
+primitive_procedure_objects = list_(*map(make_primitive, primitive_procedures))
 """
 (define (primitive-procedure-objects)
   (map (lambda (proc) 
@@ -1122,11 +1150,11 @@ def consume_number(first, chars):
     prev = None
     value = [first]
     for char in chars:
-        print(char, end="")
-        if char in " \n\t\r":
-            break
         if char == ")":
             chars.push(char)
+            break
+        print(char, end="")
+        if char in " \n\t\r":
             break
         value.append(char)
         if char not in "1234567890":
