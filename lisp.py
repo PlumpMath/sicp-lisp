@@ -62,20 +62,24 @@ def procedural_eval(exp, env):
     return error("Unknown expression type: EVAL", exp)
 
 
-def apply(procedure, arguments):
+def apply(procedure, arguments, env):
     """
-    (define (apply procedure arguments)
+    (define (apply procedure arguments env)
       (cond ((primitive-procedure? procedure)
              (apply-primitive-procedure 
               procedure 
-              arguments))
+              (list-of-arg-values 
+               arguments 
+               env)))  ; changed
             ((compound-procedure? procedure)
              (eval-sequence
                (procedure-body procedure)
                (extend-environment
                  (procedure-parameters 
                   procedure)
-                 arguments
+                 (list-of-delayed-args 
+                  arguments 
+                  env)   ; changed
                  (procedure-environment 
                   procedure))))
             (else
@@ -84,15 +88,136 @@ def apply(procedure, arguments):
                     procedure))))
     """
     if is_primitive_procedure(procedure):
-        return apply_primitive_procedure(procedure, arguments)
+        return apply_primitive_procedure(
+                    procedure,
+                    list_of_arg_values(arguments, env))
     if is_compound_procedure(procedure):
         return eval_sequence(
                     procedure_body(procedure),
                     extend_environment(
                         procedure_parameters(procedure),
-                        arguments,
+                        list_of_delayed_args(arguments, env),
                         procedure_environment(procedure)))
     return error("Unknown procedure type: APPLY", procedure)
+
+
+def actual_value(exp, env):
+    """
+    (define (actual-value exp env)
+      (force-it (eval exp env)))
+    """
+    return force_it(eval(exp, env))
+
+
+def force_it(obj):
+    """
+    (define (force-it obj)
+      (cond ((thunk? obj)
+             (let ((result
+                    (actual-value 
+                     (thunk-exp obj)
+                     (thunk-env obj))))
+               (set-car! obj 'evaluated-thunk)
+               ;; replace exp with its value:
+               (set-car! (cdr obj) result) 
+               ;; forget unneeded env:
+               (set-cdr! (cdr obj) '()) 
+               result))
+            ((evaluated-thunk? obj)
+             (thunk-value obj))
+            (else obj)))
+    """
+    if is_thunk(obj):
+        result = actual_value(thunk_exp(obj), thunk_env(obj))
+        set_head(obj, "evaluated-thunk")
+        set_tail(obj, list_(result))
+        return result
+    if is_evaluated_thunk(obj):
+        return thunk_value(obj)
+    return obj
+
+
+def delay_it(exp, env):
+    """
+    (define (delay-it exp env)
+      (list 'thunk exp env))
+    """
+    return list_("thunk", exp, env)
+
+
+def is_thunk(value):
+    """
+    (define (thunk? obj) (tagged-list? obj 'thunk))
+    """
+    return is_tagged_list(value, "thunk")
+
+
+def thunk_exp(thunk):
+    """
+    (define (thunk-exp thunk) (cadr thunk))
+    """
+    return head(tail(thunk))
+
+
+def thunk_env(thunk):
+    """
+    (define (thunk-env thunk) (caddr thunk))
+    """
+    return head(tail(tail(thunk)))
+
+
+def is_evaluated_thunk(obj):
+    """
+    (define (evaluated-thunk? obj)
+      (tagged-list? obj 'evaluated-thunk))
+    """
+    return is_tagged_list(obj, "evaluated-thunk")
+
+
+def thunk_value(evaluated_thunk):
+    """
+    (define (thunk-value evaluated-thunk) 
+      (cadr evaluated-thunk))
+    """
+    return head(tail(evaluated_thunk))
+
+
+def list_of_arg_values(exps, env):
+    """
+    (define (list-of-arg-values exps env)
+      (if (no-operands? exps)
+          '()
+          (cons (actual-value 
+                 (first-operand exps) 
+                 env)
+                (list-of-arg-values 
+                 (rest-operands exps)
+                 env))))
+    """
+    if has_no_operands(exps):
+        return []
+    return pair(
+            actual_value(first_operand(exps), env),
+            list_of_arg_values(rest_operands(exps), env))
+
+
+def list_of_delayed_args(exps, env):
+    """
+    (define (list-of-delayed-args exps env)
+      (if (no-operands? exps)
+          '()
+          (cons (delay-it 
+                 (first-operand exps) 
+                 env)
+                (list-of-delayed-args 
+                 (rest-operands exps)
+                 env))))
+    """
+    if has_no_operands(exps):
+        return []
+    return pair(
+            delay_it(first_operand(exps), env),
+            list_of_delayed_args(rest_operands(exps), env))
 
 
 def list_of_values(exps, env):
@@ -120,7 +245,7 @@ def eval_if(exp, env):
           (eval (if-alternative exp) env)))
 
     """
-    if is_true(eval(if_predicate(exp), env)):
+    if is_true(actual_value(if_predicate(exp), env)):
         return eval(if_consequent(exp), env)
     return eval(if_alternative(exp), env)
 
@@ -850,8 +975,8 @@ EVAL_DATA = (
     (is_cond, lambda exp, env: eval(cond_to_if(exp), env)),
     (is_let, lambda exp, env: eval(let_to_combination(exp), env)),
     (is_application, lambda exp, env: apply(
-                                        eval(operator(exp), env),
-                                        list_of_values(operands(exp), env))),
+                                        actual_value(operator(exp), env),
+                                        operands(exp), env)),
 )
 
 def data_driven_eval(exp, env):
@@ -1093,7 +1218,7 @@ def driver_loop():
     print("python powered lisp")
     input_ = input(input_prompt)
     for exp in tokenize(input_):
-        output = eval(exp, the_global_environment)
+        output = actual_value(exp, the_global_environment)
         print("{}{}".format(output_prompt, user_repr(output)))
 
 
@@ -1213,7 +1338,7 @@ class PushBackIterator(object):
 def run(program):
     for exp in tokenize(program):
         print("")
-        output = eval(exp, the_global_environment)
+        output = actual_value(exp, the_global_environment)
         print(user_repr(output))    
 
 

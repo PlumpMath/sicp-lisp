@@ -35,7 +35,7 @@ unless = """
           (* n (factorial (- n 1)))
           1))
 
-(factorial 3)
+(factorial 5)
 """
 
 run(unless)
