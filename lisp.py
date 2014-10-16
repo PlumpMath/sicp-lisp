@@ -52,10 +52,6 @@ def pair(a, b):
     return [a, b]
 
 
-def list_(*args):
-    return list(args)
-
-
 length = len
 
 
@@ -271,7 +267,7 @@ def make_if(predicate, consequent, alternative):
             consequent 
             alternative))
     """
-    return list_("if", predicate, consequent, alternative)
+    return ["if", predicate, consequent, alternative]
 
 
 def is_begin(exp):
@@ -513,7 +509,7 @@ def make_procedure(parameters, body, env):
     (define (make-procedure parameters body env)
       (list 'procedure parameters body env))
     """
-    return list_("procedure", parameters, body, Env(env))
+    return ["procedure", parameters, body, Env(env)]
 
 
 def is_compound_procedure(proc):
@@ -575,26 +571,7 @@ def make_frame(variables, values):
     (define (make-frame variables values)
       (cons variables values))
     """
-    return pair(variables, values)
-
-
-frame_variables = head
-frame_values = tail
-"""
-(define (frame-variables frame) (car frame))
-(define (frame-values frame) (cdr frame))
-"""
-
-
-def add_binding_to_frame(var, val, frame):
-    """
-    (define (add-binding-to-frame! var val frame)
-      (set-car! frame (cons var (car frame)))
-      (set-cdr! frame (cons val (cdr frame))))
-    """
-    set_head(frame, pair(var, head(frame)))
-    set_tail(frame, pair(val, tail(frame)))
-    return val
+    return dict(zip(variables, values))
 
 
 def extend_environment(vars, vals, base_env):
@@ -637,16 +614,12 @@ def lookup_variable_value(var, env):
       (env-loop env))
     """
     def env_loop(env):
-        def scan(vars, vals):
-            if not vars:
-                return env_loop(enclosing_environment(env))
-            if var == head(vars):
-                return head(vals)
-            return scan(tail(vars), tail(vals))
-        if env == the_empty_environment:
+        if not env:
             return error("Unbound variable", var)
         frame = first_frame(env)
-        return scan(frame_variables(frame), frame_values(frame))
+        if var in frame:
+            return frame[var]
+        return env_loop(enclosing_environment(env))
     return env_loop(env)
 
 
@@ -670,16 +643,12 @@ def set_variable_value(var, val, env):
       (env-loop env))
     """
     def env_loop(env):
-        def scan(vars, vals):
-            if not vars:
-                return env_loop(enclosing_environment(env))
-            if var == head(vars):
-                return set_head(vals, val)
-            return scan(tail(vars), tail(vals))
-        if env == the_empty_environment:
+        if not env:
             return error("Unbound variable: SET!", var)
         frame = first_frame(env)
-        return scan(frame_variables(frame), frame_values(frame))
+        if var in frame:
+            frame[var] = val
+        return env_loop(enclosing_environment(env))
     return env_loop(env)
 
 
@@ -698,14 +667,8 @@ def define_variable(var, val, env):
         (scan (frame-variables frame)
               (frame-values frame))))
     """
-    def scan(vars, vals):
-        if not vars:
-            return add_binding_to_frame(var, val, frame)
-        if var == head(vars):
-            return set_head(vals, val)
-        return scan(tail(vars), tail(vals))
-    frame = first_frame(env)
-    return scan(frame_variables(frame), frame_values(frame))
+    first_frame(env)[var] = val
+    return val
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # analyzers
@@ -965,6 +928,7 @@ def setup_environment():
     define_variable("false", False, initial_env)
     return initial_env
 
+
 def is_primitive_procedure(proc):
     """
     (define (primitive-procedure? proc)
@@ -982,7 +946,7 @@ def primitive_implementation(proc):
 
 
 def make_primitive(obj):
-    return list_("primitive", head(tail(obj)))
+    return ["primitive", head(tail(obj))]
 
 
 def add(*a):
@@ -997,16 +961,17 @@ def mul(a, b):
 def div(a, b):
     return a / b
 
+
 primitive_procedures = [
-    list_("car", head),
-    list_("cdr", tail),
-    list_("cons", pair),
-    list_("null?", is_null),
-    list_("=", is_equal),
-    list_("+", add),
-    list_("-", sub),
-    list_("*", mul),
-    list_("/", div),
+    ("car", head),
+    ("cdr", tail),
+    ("cons", pair),
+    ("null?", is_null),
+    ("=", is_equal),
+    ("+", add),
+    ("-", sub),
+    ("*", mul),
+    ("/", div),
 ]
 """
 (define primitive-procedures
@@ -1018,14 +983,14 @@ primitive_procedures = [
 """
 
 
-primitive_procedure_names = list_(*map(head, primitive_procedures))
+primitive_procedure_names = list(map(head, primitive_procedures))
 """
 (define (primitive-procedure-names)
   (map car primitive-procedures))
 """
 
 
-primitive_procedure_objects = list_(*map(make_primitive, primitive_procedures))
+primitive_procedure_objects = list(map(make_primitive, primitive_procedures))
 """
 (define (primitive-procedure-objects)
   (map (lambda (proc) 
