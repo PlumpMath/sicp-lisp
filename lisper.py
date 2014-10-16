@@ -38,4 +38,4 @@ unless = """
 (factorial 3)
 """
 
-run(unless)
+run(fact)

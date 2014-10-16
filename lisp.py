@@ -2,174 +2,89 @@
 import re
 import pprint
 
-def procedural_eval(exp, env):
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# lisp primitives
+
+def head(obj):
     """
-    (define (eval exp env)
-      (cond ((self-evaluating? exp) 
-             exp)
-            ((variable? exp) 
-             (lookup-variable-value exp env))
-            ((quoted? exp) 
-             (text-of-quotation exp))
-            ((assignment? exp) 
-             (eval-assignment exp env))
-            ((definition? exp) 
-             (eval-definition exp env))
-            ((if? exp) 
-             (eval-if exp env))
-            ((lambda? exp)
-             (make-procedure 
-              (lambda-parameters exp)
-              (lambda-body exp)
-              env))
-            ((begin? exp)
-             (eval-sequence 
-              (begin-actions exp) 
-              env))
-            ((cond? exp) 
-             (eval (cond->if exp) env))
-            ((application? exp)
-             (apply (eval (operator exp) env)
-                    (list-of-values 
-                     (operands exp) 
-                     env)))
-            (else
-             (error "Unknown expression 
-                     type: EVAL" exp))))
+    car
     """
-    if is_self_evaluating(exp):
-        return exp
-    if is_variable(exp):
-        return lookup_variable_value(exp, env)
-    if is_quoted(exp):
-        return text_of_quotation(exp)
-    if is_assignment(exp):
-        return eval_assignment(exp, env)
-    if is_definition(exp):
-        return eval_definition(exp, env)
-    if is_if(exp):
-        return eval_if(exp, env)
-    if is_lambda(exp):
-        return make_procedure(lambda_parameters(exp), lambda_body(exp), env)
-    if is_begin(exp):
-        return eval_sequence(begin_actions(exp), env)
-    if is_cond(exp):
-        return eval(cond_to_if(exp), env)
-    if is_application(exp):
-        return apply(
-                eval(operator(exp), env),
-                list_of_values(operands(exp), env))
-    return error("Unknown expression type: EVAL", exp)
+    if not obj:
+        error("Empty list has no head", obj)
+    try:
+        return obj[0]
+    except Exception:
+        return error("Cannot get CAR:", obj)
 
 
-def apply(procedure, arguments):
+def tail(obj):
     """
-    (define (apply procedure arguments)
-      (cond ((primitive-procedure? procedure)
-             (apply-primitive-procedure 
-              procedure 
-              arguments))
-            ((compound-procedure? procedure)
-             (eval-sequence
-               (procedure-body procedure)
-               (extend-environment
-                 (procedure-parameters 
-                  procedure)
-                 arguments
-                 (procedure-environment 
-                  procedure))))
-            (else
-             (error "Unknown procedure 
-                     type: APPLY" 
-                    procedure))))
+    cdr
     """
-    if is_primitive_procedure(procedure):
-        return apply_primitive_procedure(procedure, arguments)
-    if is_compound_procedure(procedure):
-        return eval_sequence(
-                    procedure_body(procedure),
-                    extend_environment(
-                        procedure_parameters(procedure),
-                        arguments,
-                        procedure_environment(procedure)))
-    return error("Unknown procedure type: APPLY", procedure)
+    if not obj:
+        error("Empty list has no tail", obj)
+    try:
+        return obj[1:]
+    except Exception:
+        return error("Cannot get CDR:", obj)
 
 
-def list_of_values(exps, env):
-    """
-    (define (list-of-values exps env)
-      (if (no-operands? exps)
-          '()
-          (cons (eval (first-operand exps) env)
-                (list-of-values 
-                 (rest-operands exps) 
-                 env))))
-    """
-    if has_no_operands(exps):
-        return []
-    return pair(
-        eval(first_operand(exps), env),
-        list_of_values(rest_operands(exps), env))
+def set_head(pair_, value):
+    pair_[0] = value
+    return value
 
 
-def eval_if(exp, env):
-    """
-    (define (eval-if exp env)
-      (if (true? (eval (if-predicate exp) env))
-          (eval (if-consequent exp) env)
-          (eval (if-alternative exp) env)))
-
-    """
-    if is_true(eval(if_predicate(exp), env)):
-        return eval(if_consequent(exp), env)
-    return eval(if_alternative(exp), env)
+def set_tail(pair_, value):
+    pair_[1:] = value
+    return value
 
 
-def eval_sequence(exps, env):
-    """
-    (define (eval-sequence exps env)
-      (cond ((last-exp? exps) 
-             (eval (first-exp exps) env))
-            (else 
-             (eval (first-exp exps) env)
-             (eval-sequence (rest-exps exps) 
-                            env))))
-    """
-    if is_last_exp(exps):
-        return eval(first_exp(exps), env)
-    eval(first_exp(exps), env)
-    return eval_sequence(rest_exps(exps), env)
+def is_pair(obj):
+    return isinstance(obj, list)
 
 
-def eval_assignment(exp, env):
+def pair(a, b):
     """
-    (define (eval-assignment exp env)
-      (set-variable-value! 
-       (assignment-variable exp)
-       (eval (assignment-value exp) env)
-       env)
-      'ok)
+    cons
     """
-    set_variable_value(
-        assignment_variable(exp),
-        eval(assignment_value(exp), env),
-        env)
+    if isinstance(b, list):
+        return [a] + b
+    return [a, b]
 
 
-def eval_definition(exp, env):
+def list_(*args):
+    return list(args)
+
+
+length = len
+
+
+def is_null(exp):
     """
-    (define (eval-definition exp env)
-      (define-variable! 
-        (definition-variable exp)
-        (eval (definition-value exp) env)
-        env)
-      'ok)
+    null?
     """
-    define_variable(
-        definition_variable(exp),
-        eval(definition_value(exp), env),
-        env)
-    return "\n%s" % pprint.pformat(env)
+    return exp is None or exp == []
+
+
+SYMBOL_RE = re.compile("^[^\s()]+$")
+def is_symbol(exp):
+    return isinstance(exp, str) and SYMBOL_RE.match(exp)
+
+
+class string(str):
+    """Marker class for string values"""
+
+
+def is_equal(a, b):
+    return a == b
+
+
+def error(msg, *args):
+    fargs = (a if isinstance(a, str) else repr(a) for a in args)
+    raise Error("{} {}".format(msg, " ".join(fargs)))
+
+
+class Error(Exception): pass
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # syntax
@@ -345,6 +260,7 @@ def if_alternative(exp):
     if not is_null(tail(tail(tail(exp)))):
         return head(tail(tail(tail(exp))))
 
+
 def make_if(predicate, consequent, alternative):
     """
     (define (make-if predicate 
@@ -380,18 +296,12 @@ def is_last_exp(seq):
     return not tail(seq)
 
 
-def first_exp(seq):
-    """
-    (define (first-exp seq) (car seq))
-    """
-    return head(seq)
-
-
-def rest_exps(seq):
-    """
-    (define (rest-exps seq) (cdr seq))
-    """
-    return tail(seq)
+first_exp = head
+rest_exps = tail
+"""
+(define (first-exp seq) (car seq))
+(define (rest-exps seq) (cdr seq))
+"""
 
 
 def sequence_to_exp(seq):
@@ -434,27 +344,6 @@ def operands(exp):
     (define (operands exp) (cdr exp))
     """
     return tail(exp)
-
-
-def has_no_operands(ops):
-    """
-    (define (no-operands? ops) (null? ops))
-    """
-    return not ops
-
-
-def first_operand(ops):
-    """
-    (define (first-operand ops) (car ops))
-    """
-    return head(ops)
-
-
-def rest_operands(ops):
-    """
-    (define (rest-operands ops) (cdr ops))
-    """
-    return tail(ops)
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # derived expressions
@@ -671,24 +560,14 @@ class Env(object):
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # operations on environments
 
-def enclosing_environment(env):
-    """
-    (define (enclosing-environment env) (cdr env))
-    """
-    return tail(env)
-
-
-def first_frame(env):
-    """
-    (define (first-frame env) (car env))
-    """
-    return head(env)
-
-
+enclosing_environment = tail
+first_frame = head
+the_empty_environment = []
 """
+(define (enclosing-environment env) (cdr env))
+(define (first-frame env) (car env))
 (define the-empty-environment '())
 """
-the_empty_environment = []
 
 
 def make_frame(variables, values):
@@ -699,18 +578,12 @@ def make_frame(variables, values):
     return pair(variables, values)
 
 
-def frame_variables(frame):
-    """
-    (define (frame-variables frame) (car frame))
-    """
-    return head(frame)
-
-
-def frame_values(frame):
-    """
-    (define (frame-values frame) (cdr frame))
-    """
-    return tail(frame)
+frame_variables = head
+frame_values = tail
+"""
+(define (frame-variables frame) (car frame))
+(define (frame-values frame) (cdr frame))
+"""
 
 
 def add_binding_to_frame(var, val, frame):
@@ -721,6 +594,7 @@ def add_binding_to_frame(var, val, frame):
     """
     set_head(frame, pair(var, head(frame)))
     set_tail(frame, pair(val, tail(frame)))
+    return val
 
 
 def extend_environment(vars, vals, base_env):
@@ -834,126 +708,239 @@ def define_variable(var, val, env):
     return scan(frame_variables(frame), frame_values(frame))
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-# Exercise 4.3 : data driven eval
+# analyzers
 
-EVAL_DATA = (
-    (is_self_evaluating, lambda exp, env: exp),
-    (is_variable, lookup_variable_value),
-    (is_quoted, lambda exp, env: text_of_quotation(exp)),
-    (is_assignment, eval_assignment),
-    (is_definition, eval_definition),
-    (is_if, eval_if),
-    (is_lambda, lambda exp, env: make_procedure(
-                                    lambda_parameters(exp),
-                                    lambda_body(exp), env)),
-    (is_begin, lambda exp, env: eval_sequence(begin_actions(exp), env)),
-    (is_cond, lambda exp, env: eval(cond_to_if(exp), env)),
-    (is_let, lambda exp, env: eval(let_to_combination(exp), env)),
-    (is_application, lambda exp, env: apply(
-                                        eval(operator(exp), env),
-                                        list_of_values(operands(exp), env))),
-)
+def analyze_self_evaluating(exp):
+    """
+    (define (analyze-self-evaluating exp)
+      (lambda (env) exp))
+    """
+    return lambda env: exp
 
-def data_driven_eval(exp, env):
-    for predicate, process in EVAL_DATA:
+
+def analyze_quoted(exp):
+    """
+    (define (analyze-quoted exp)
+      (let ((qval (text-of-quotation exp)))
+        (lambda (env) qval)))
+    """
+    qval = text_of_quotation(exp)
+    return lambda env: qval
+
+
+def analyze_variable(exp):
+    """
+    (define (analyze-variable exp)
+      (lambda (env) 
+        (lookup-variable-value exp env)))
+    """
+    return lambda env: lookup_variable_value(exp, env)
+
+
+def analyze_assignment(exp):
+    """
+    (define (analyze-assignment exp)
+      (let ((var (assignment-variable exp))
+            (vproc (analyze 
+                    (assignment-value exp))))
+        (lambda (env)
+          (set-variable-value! 
+           var (vproc env) env)
+          'ok)))
+    """
+    var = assignment_variable(exp)
+    vproc = analyze(assignment_value(exp))
+    return lambda env: set_variable_value(var, vproc(env), env)
+
+
+def analyze_definition(exp):
+    """
+    (define (analyze-definition exp)
+      (let ((var (definition-variable exp))
+            (vproc (analyze 
+                    (definition-value exp))))
+        (lambda (env)
+          (define-variable! var (vproc env) env)
+          'ok)))
+    """
+    var = definition_variable(exp)
+    vproc = analyze(definition_value(exp))
+    def define_in(env):
+        define_variable(var, vproc(env), env)
+        return "\n%s" % pprint.pformat(env)
+    return define_in
+
+
+def analyze_if(exp):
+    """
+    (define (analyze-if exp)
+      (let ((pproc (analyze (if-predicate exp)))
+            (cproc (analyze (if-consequent exp)))
+            (aproc (analyze (if-alternative exp))))
+        (lambda (env)
+          (if (true? (pproc env))
+              (cproc env)
+              (aproc env)))))
+    """
+    pre = analyze(if_predicate(exp))
+    con = analyze(if_consequent(exp))
+    alt = analyze(if_alternative(exp))
+    return lambda env: con(env) if is_true(pre(env)) else alt(env)
+
+
+def analyze_lambda(exp):
+    """
+    (define (analyze-lambda exp)
+      (let ((vars (lambda-parameters exp))
+            (bproc (analyze-sequence 
+                    (lambda-body exp))))
+        (lambda (env) 
+          (make-procedure vars bproc env))))
+    """
+    params = lambda_parameters(exp)
+    body = analyze_sequence(lambda_body(exp))
+    return lambda env: make_procedure(params, body, env)
+
+
+def analyze_sequence(exps):
+    """
+    (define (analyze-sequence exps)
+      (define (sequentially proc1 proc2)
+        (lambda (env) (proc1 env) (proc2 env)))
+      (define (loop first-proc rest-procs)
+        (if (null? rest-procs)
+            first-proc
+            (loop (sequentially first-proc 
+                                (car rest-procs))
+                  (cdr rest-procs))))
+      (let ((procs (map analyze exps)))
+        (if (null? procs)
+            (error "Empty sequence: ANALYZE"))
+        (loop (car procs) (cdr procs))))
+    """
+    def sequentially(proc1, proc2):
+        def combined(env):
+            proc1(env)
+            return proc2(env)
+        return combined
+    def loop(first_proc, rest_procs):
+        if is_null(rest_procs):
+            return first_proc
+        return loop(sequentially(first_proc, head(rest_procs)), tail(rest_procs))
+    procs = [analyze(e) for e in exps]
+    if is_null(procs):
+        return error("Empty sequence: ANALYZE")
+    return loop(head(procs), tail(procs))
+
+
+def analyze_application(exp):
+    """
+    (define (analyze-application exp)
+      (let ((fproc (analyze (operator exp)))
+            (aprocs (map analyze (operands exp))))
+        (lambda (env)
+          (execute-application 
+           (fproc env)
+           (map (lambda (aproc) (aproc env))
+                aprocs)))))
+    """
+    fproc = analyze(operator(exp))
+    aprocs = [analyze(op) for op in operands(exp)]
+    return lambda env: execute_application(
+                            fproc(env),
+                            [p(env) for p in aprocs])
+
+
+def execute_application(proc, args):
+    """
+    (define (execute-application proc args)
+      (cond ((primitive-procedure? proc)
+             (apply-primitive-procedure proc args))
+            ((compound-procedure? proc)
+             ((procedure-body proc)
+              (extend-environment 
+               (procedure-parameters proc)
+               args
+               (procedure-environment proc))))
+            (else (error "Unknown procedure type: 
+                          EXECUTE-APPLICATION"
+                         proc))))
+    """
+    if is_primitive_procedure(proc):
+        return apply_primitive_procedure(proc, args)
+    if is_compound_procedure(proc):
+        return procedure_body(proc)(
+                    extend_environment(
+                        procedure_parameters(proc),
+                        args,
+                        procedure_environment(proc)))
+    return error("Unknown procedure type: EXECUTE-APPLICATION", proc)
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# 4.1.7+ : data driven analyze
+
+ANALYZE_DATA = [
+    (is_self_evaluating, analyze_self_evaluating),
+    (is_quoted, analyze_quoted),
+    (is_variable, analyze_variable),
+    (is_assignment, analyze_assignment),
+    (is_definition, analyze_definition),
+    (is_if, analyze_if),
+    (is_lambda, analyze_lambda),
+    (is_begin, lambda exp: analyze_sequence(begin_actions(exp))),
+    (is_cond, lambda exp: analyze(cond_to_if(exp))),
+    (is_let, lambda exp: analyze(let_to_combination(exp))),
+    (is_application, analyze_application),
+]
+
+def analyze(exp):
+    """
+    (define (analyze exp)
+      (cond ((self-evaluating? exp)
+             (analyze-self-evaluating exp))
+            ((quoted? exp) 
+             (analyze-quoted exp))
+            ((variable? exp) 
+             (analyze-variable exp))
+            ((assignment? exp) 
+             (analyze-assignment exp))
+            ((definition? exp) 
+             (analyze-definition exp))
+            ((if? exp) 
+             (analyze-if exp))
+            ((lambda? exp) 
+             (analyze-lambda exp))
+            ((begin? exp) 
+             (analyze-sequence 
+              (begin-actions exp)))
+            ((cond? exp) 
+             (analyze (cond->if exp)))
+            ((application? exp) 
+             (analyze-application exp))
+            (else
+             (error "Unknown expression 
+                     type: ANALYZE" 
+                    exp))))
+    """
+    for predicate, analyze_ in ANALYZE_DATA:
         try:
             matched = predicate(exp)
         except Exception:
             return error("Cannot check", repr(exp), " with ", predicate.__name__)
         if matched:
             try:
-                return process(exp, env)
+                return analyze_(exp)
             except Exception:
-                return error("Cannot process {}".format(predicate.__name__[3:]),
-                             repr(exp), '\nenv: ', repr(env))
+                return error("Cannot analyze {}".format(predicate.__name__[3:]),
+                             repr(exp))
     return error("Unknown expression type: EVAL", exp)
 
 
-eval = data_driven_eval
-
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-# lisp primitives
-
-def head(obj):
+def eval(exp, env):
     """
-    car
+    (define (eval exp env) ((analyze exp) env))
     """
-    if not obj:
-        error("Empty list has no head", obj)
-    try:
-        return obj[0]
-    except Exception:
-        return error("Cannot get CAR:", obj)
-
-
-def tail(obj):
-    """
-    cdr
-    """
-    if not obj:
-        error("Empty list has no tail", obj)
-    try:
-        return obj[1:]
-    except Exception:
-        return error("Cannot get CDR:", obj)
-
-
-def set_head(pair_, value):
-    pair_[0] = value
-
-
-def set_tail(pair_, value):
-    pair_[1:] = value
-
-
-def is_pair(obj):
-    return isinstance(obj, list)
-
-
-def pair(a, b):
-    if isinstance(b, list):
-        return [a] + b
-    return [a, b]
-
-
-def list_(*args):
-    return list(args)
-
-
-def iter_list(lst):
-    return iter(lst)
-
-
-def length(lst):
-    return len(lst) #sum(1 for v in iter_list(lst))
-
-
-def is_null(exp):
-    """
-    null?
-    """
-    return exp is None or exp == []
-
-
-SYMBOL_RE = re.compile("^[^\s()]+$")
-def is_symbol(exp):
-    return isinstance(exp, str) and SYMBOL_RE.match(exp)
-
-
-class string(str):
-    """Marker class for string values"""
-
-
-def is_equal(a, b):
-    return a == b
-
-
-def error(msg, *args):
-    fargs = (a if isinstance(a, str) else repr(a) for a in args)
-    raise Error("{} {}".format(msg, " ".join(fargs)))
-
-
-class Error(Exception): pass
+    return analyze(exp)(env)
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # running the evaluator as a program
@@ -1053,7 +1040,7 @@ def apply_primitive_procedure(proc, args):
       (apply-in-underlying-scheme
        (primitive-implementation proc) args))
     """
-    return primitive_implementation(proc)(*iter_list(args))
+    return primitive_implementation(proc)(*args)
 
 
 input_prompt  = ";;; M-Eval input: "
@@ -1143,7 +1130,7 @@ def iter_expressions(chars):
         tokens.append("".join(token))
         yield "".join(token)
     if tokens:
-        error("missing closing paren", tokens)
+        return error("missing closing paren", tokens)
 
 
 def consume_number(first, chars):
