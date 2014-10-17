@@ -648,6 +648,7 @@ def set_variable_value(var, val, env):
         frame = first_frame(env)
         if var in frame:
             frame[var] = val
+            return val
         return env_loop(enclosing_environment(env))
     return env_loop(env)
 
