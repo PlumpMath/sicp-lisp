@@ -255,6 +255,7 @@ def if_alternative(exp):
     """
     if not is_null(tail(tail(tail(exp)))):
         return head(tail(tail(tail(exp))))
+    return False
 
 
 def make_if(predicate, consequent, alternative):
@@ -841,6 +842,369 @@ def execute_application(proc, args):
     return error("Unknown procedure type: EXECUTE-APPLICATION", proc)
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# amb evaluator
+
+def is_amb(exp):
+    """
+    (define (amb? exp) (tagged-list? exp 'amb))
+    """
+    return is_tagged_list(exp, "amb")
+
+
+amb_choices = tail
+"""
+(define (amb-choices exp) (cdr exp))
+"""
+
+
+def ambeval(exp, env, succeed, fail):
+    """
+    (define (ambeval exp env succeed fail)
+      ((analyze exp) env succeed fail))
+    """
+    return analyze(exp)(env, succeed, fail)
+
+
+def analyze_self_evaluating(exp):
+    """
+    (define (analyze-self-evaluating exp)
+      (lambda (env succeed fail)
+        (succeed exp fail)))
+    """
+    return lambda env, succeed, fail: succeed(exp, fail)
+
+
+def analyze_quoted(exp):
+    """
+    (define (analyze-quoted exp)
+      (let ((qval (text-of-quotation exp)))
+        (lambda (env succeed fail)
+          (succeed qval fail))))
+    """
+    qval = text_of_quotation(exp)
+    return lambda env, succeed, fail: succeed(qval, fail)
+
+
+def analyze_variable(exp):
+    """
+    (define (analyze-variable exp)
+      (lambda (env succeed fail)
+        (succeed (lookup-variable-value exp env)
+                 fail)))
+    """
+    return lambda env, succeed, fail: \
+            succeed(lookup_variable_value(exp, env), fail)
+
+
+def analyze_lambda(exp):
+    """
+    (define (analyze-lambda exp)
+      (let ((vars (lambda-parameters exp))
+            (bproc (analyze-sequence 
+                    (lambda-body exp))))
+        (lambda (env succeed fail)
+          (succeed (make-procedure vars bproc env)
+                   fail))))
+    """
+    params = lambda_parameters(exp)
+    body = analyze_sequence(lambda_body(exp))
+    return lambda env, succeed, fail: \
+            succeed(make_procedure(params, body, env), fail)
+
+
+def analyze_if(exp):
+    """
+    (define (analyze-if exp)
+      (let ((pproc (analyze (if-predicate exp)))
+            (cproc (analyze (if-consequent exp)))
+            (aproc (analyze (if-alternative exp))))
+        (lambda (env succeed fail)
+          (pproc env
+                 ;; success continuation for evaluating
+                 ;; the predicate to obtain pred-value
+                 (lambda (pred-value fail2)
+                   (if (true? pred-value)
+                       (cproc env succeed fail2)
+                       (aproc env succeed fail2)))
+                 ;; failure continuation for
+                 ;; evaluating the predicate
+                 fail))))
+    """
+    pre = analyze(if_predicate(exp))
+    con = analyze(if_consequent(exp))
+    alt = analyze(if_alternative(exp))
+    return lambda env, succeed, fail: \
+            pre(env,
+                (lambda pred_value, fail2:
+                    con(env, succeed, fail2)
+                    if is_true(pred_value)
+                    else alt(env, succeed, fail2)),
+                fail)
+
+
+def analyze_sequence(exps):
+    """
+    (define (analyze-sequence exps)
+      (define (sequentially a b)
+        (lambda (env succeed fail)
+          (a env
+             ;; success continuation for calling a
+             (lambda (a-value fail2)
+               (b env succeed fail2))
+             ;; failure continuation for calling a
+             fail)))
+      (define (loop first-proc rest-procs)
+        (if (null? rest-procs)
+            first-proc
+            (loop (sequentially first-proc 
+                                (car rest-procs))
+                  (cdr rest-procs))))
+      (let ((procs (map analyze exps)))
+        (if (null? procs)
+            (error "Empty sequence: ANALYZE"))
+        (loop (car procs) (cdr procs))))
+    """
+    def sequentially(proc1, proc2):
+        def combined(env, succeed, fail):
+            succeed1 = lambda proc1_value, fail2: proc2(env, succeed, fail2)
+            return proc1(env, succeed1, fail)
+        return combined
+    def loop(first_proc, rest_procs):
+        if is_null(rest_procs):
+            return first_proc
+        return loop(sequentially(first_proc, head(rest_procs)), tail(rest_procs))
+    procs = [analyze(e) for e in exps]
+    if is_null(procs):
+        return error("Empty sequence: ANALYZE")
+    return loop(head(procs), tail(procs))
+
+
+def analyze_definition(exp):
+    """
+    (define (analyze-definition exp)
+      (let ((var (definition-variable exp))
+            (vproc (analyze 
+                    (definition-value exp))))
+        (lambda (env succeed fail)
+          (vproc env
+                 (lambda (val fail2)
+                   (define-variable! var val env)
+                   (succeed 'ok fail2))
+                 fail))))
+    """
+    var = definition_variable(exp)
+    vproc = analyze(definition_value(exp))
+    def define_in(env, succeed, fail):
+        def vproc_succeed(val, fail2):
+            define_variable(var, val, env)
+            env_repr = "\n%s" % pprint.pformat(env)
+            return succeed(env_repr, fail2)
+        return vproc(env, vproc_succeed, fail)
+    return define_in
+
+
+def analyze_assignment(exp):
+    """
+    (define (analyze-assignment exp)
+      (let ((var (assignment-variable exp))
+            (vproc (analyze 
+                    (assignment-value exp))))
+        (lambda (env succeed fail)
+          (vproc env
+                 (lambda (val fail2)    ; *1*
+                   (let ((old-value (lookup-variable-value var env)))
+                     (set-variable-value! var val env)
+                     (succeed 
+                      'ok
+                      (lambda ()    ; *2*
+                        (set-variable-value! 
+                         var
+                         old-value
+                         env)
+                        (fail2)))))
+                   fail))))
+    """
+    var = assignment_variable(exp)
+    vproc = analyze(assignment_value(exp))
+    def set_in(env, succeed, fail):
+        def vproc_succeed(val, fail2):
+            def fail_and_undo():
+                set_variable_value(var, old_value, env)
+                return fail2()
+            old_value = lookup_variable_value(var, env)
+            set_variable_value(var, val, env)
+            return succeed(val, fail_and_undo)
+        return vproc(env, vproc_succeed, fail)
+    return set_in
+
+
+def analyze_application(exp):
+    """
+    (define (analyze-application exp)
+      (let ((fproc (analyze (operator exp)))
+            (aprocs (map analyze (operands exp))))
+        (lambda (env succeed fail)
+          (fproc env
+                 (lambda (proc fail2)
+                   (get-args 
+                    aprocs
+                    env
+                    (lambda (args fail3)
+                      (execute-application
+                       proc args succeed fail3))
+                    fail2))
+                 fail))))
+    """
+    fproc = analyze(operator(exp))
+    aprocs = [analyze(op) for op in operands(exp)]
+    def exec_app(env, succeed, fail):
+        def fproc_succeed(proc, fail2):
+            def get_args_succeed(args, fail3):
+                return amb_execute_application(proc, args, succeed, fail3)
+            return get_args(aprocs, env, get_args_succeed, fail2)
+        return fproc(env, fproc_succeed, fail)
+    return exec_app
+
+
+def get_args(aprocs, env, succeed, fail):
+    """
+    (define (get-args aprocs env succeed fail)
+      (if (null? aprocs)
+          (succeed '() fail)
+          ((car aprocs) 
+           env
+           ;; success continuation for this aproc
+           (lambda (arg fail2)
+             (get-args 
+              (cdr aprocs)
+              env
+              ;; success continuation for
+              ;; recursive call to get-args
+              (lambda (args fail3)
+                (succeed (cons arg args)
+                         fail3))
+              fail2))
+           fail)))
+    """
+    if not aprocs:
+        return succeed([], fail)
+    def first_aproc_succeed(arg, fail2):
+        def get_args_succeed(args, fail3):
+            return succeed(pair(arg, args), fail3)
+        return get_args(tail(aprocs), env, get_args_succeed, fail2)
+    return head(aprocs)(env, first_aproc_succeed, fail)
+
+
+def amb_execute_application(proc, args, succeed, fail):
+    """
+    (define (execute-application 
+             proc args succeed fail)
+      (cond ((primitive-procedure? proc)
+             (succeed 
+              (apply-primitive-procedure 
+               proc args)
+              fail))
+            ((compound-procedure? proc)
+             ((procedure-body proc)
+              (extend-environment 
+               (procedure-parameters proc)
+               args
+               (procedure-environment proc))
+              succeed
+              fail))
+            (else (error "Unknown procedure type: 
+                          EXECUTE-APPLICATION"
+                         proc))))
+    """
+    if is_primitive_procedure(proc):
+        return succeed(apply_primitive_procedure(proc, args), fail)
+    if is_compound_procedure(proc):
+        return procedure_body(proc)(
+                    extend_environment(
+                        procedure_parameters(proc),
+                        args,
+                        procedure_environment(proc)),
+                    succeed,
+                    fail)
+    return error("Unknown procedure type: EXECUTE-APPLICATION", proc)
+
+
+def analyze_amb(exp):
+    """
+    (define (analyze-amb exp)
+      (let ((cprocs
+             (map analyze (amb-choices exp))))
+        (lambda (env succeed fail)
+          (define (try-next choices)
+            (if (null? choices)
+                (fail)
+                ((car choices) 
+                 env
+                 succeed
+                 (lambda ()
+                   (try-next (cdr choices))))))
+          (try-next cprocs))))
+    """
+    cprocs = [analyze(c) for c in amb_choices(exp)]
+    def exec_amb(env, succeed, fail):
+        def try_next(choices):
+            if not choices:
+                return fail()
+            return head(choices)(env, succeed, lambda: try_next(tail(choices)))
+        return try_next(cprocs)
+    return exec_amb
+
+
+def eval_amb(exp, env, current_problem=[]):
+    """
+    adapted from the amb driver loop
+    (define (driver-loop)
+      (define (internal-loop try-again)
+        (prompt-for-input input-prompt)
+        (let ((input (read)))
+          (if (eq? input 'try-again)
+              (try-again)
+              (begin
+                (newline)
+                (display 
+                 ";;; Starting a new problem ")
+                (ambeval 
+                 input
+                 the-global-environment
+                 ;; ambeval success
+                 (lambda (val next-alternative)
+                   (announce-output 
+                    output-prompt)
+                   (user-print val)
+                   (internal-loop 
+                    next-alternative))
+                 ;; ambeval failure
+                 (lambda ()
+                   (announce-output
+                    ";;; There are no 
+                     more values of")
+                   (user-print input)
+                   (driver-loop)))))))
+      (internal-loop
+       (lambda ()
+         (newline)
+         (display 
+          ";;; There is no current problem")
+         (driver-loop))))
+    """
+    if exp == "try-again":
+        if not current_problem:
+            return "There is no current problem"
+        next_alternative = current_problem.pop()
+        return next_alternative()
+    def succeed(val, next_alternative):
+        current_problem.append(next_alternative)
+        return val
+    def fail():
+        return "There are no more values of {!r}".format(exp)
+    return ambeval(exp, env, succeed, fail)
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # 4.1.7+ : data driven analyze
 
 ANALYZE_DATA = [
@@ -854,6 +1218,7 @@ ANALYZE_DATA = [
     (is_begin, lambda exp: analyze_sequence(begin_actions(exp))),
     (is_cond, lambda exp: analyze(cond_to_if(exp))),
     (is_let, lambda exp: analyze(let_to_combination(exp))),
+    (is_amb, analyze_amb),
     (is_application, analyze_application),
 ]
 
@@ -905,6 +1270,9 @@ def eval(exp, env):
     (define (eval exp env) ((analyze exp) env))
     """
     return analyze(exp)(env)
+
+
+eval = eval_amb
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # running the evaluator as a program
@@ -962,13 +1330,24 @@ def mul(a, b):
 def div(a, b):
     return a / b
 
+def not_(x):
+    return not x
+
+def lt(a, b):
+    return a < b
+
+def gt(a, b):
+    return a > b
 
 primitive_procedures = [
     ("car", head),
     ("cdr", tail),
     ("cons", pair),
     ("null?", is_null),
+    ("not", not_),
     ("=", is_equal),
+    ("<", lt),
+    (">", gt),
     ("+", add),
     ("-", sub),
     ("*", mul),
@@ -1058,7 +1437,6 @@ def tokenize(program):
 def iter_expressions(chars):
     token = []
     tokens = []
-    balanced = False
     for char in chars:
         print(char, end="")
         if char == ")":
@@ -1071,6 +1449,12 @@ def iter_expressions(chars):
                 yield tokens[-1]
                 token = []
             yield list(iter_expressions(chars))
+        elif char == "'":
+            if token:
+                tokens.append("".join(token))
+                yield tokens[-1]
+                token = []
+            yield ["quote", next(iter_expressions(chars))]
         elif char in " \n\t\r":
             if token:
                 tokens.append("".join(token))
@@ -1083,18 +1467,15 @@ def iter_expressions(chars):
                 token = []
             tokens.append(consume_string(chars))
             yield tokens[-1]
-        elif char in "1234567890":
-            if token:
-                tokens.append("".join(token))
-                yield tokens[-1]
-                token = []
+        elif char in "1234567890" and not token:
             tokens.append(consume_number(char, chars))
             yield tokens[-1]
         else:
             token.append(char)
     if token:
         tokens.append("".join(token))
-        yield "".join(token)
+    if tokens:
+        yield "".join(tokens.pop())
     if tokens:
         return error("missing closing paren", tokens)
 
